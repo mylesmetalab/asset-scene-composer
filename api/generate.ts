@@ -28,7 +28,7 @@ export default async function handler(req: Request): Promise<Response> {
       body: JSON.stringify({
         contents: [{
           parts: [{
-            text: `pixel art of ${prompt} on a plain white background, isolated subject, no scenery, no sky, no atmosphere`,
+            text: `3D rendered soft inflated balloon-like object of ${prompt}, glossy vinyl plush material, single subject centered on plain white background, isolated, soft pillowy form, smooth surface, no scenery, no shadow, no text`,
           }],
         }],
       }),

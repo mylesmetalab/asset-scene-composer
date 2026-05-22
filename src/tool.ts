@@ -96,7 +96,7 @@ const fields = {
   aiReplace:      folder(button({ label: "🔄 Replace with AI" }), "AI"),
 
   // ── Upload an image (PNG / JPG / WebP) ─────────────────────────────
-  gridSize:       folder(structural(slider({ min: 8, max: 64, step: 1, default: 32, label: "Grid size" })), "Upload"),
+  gridSize:       folder(structural(slider({ min: 8, max: 128, step: 1, default: 64, label: "Grid size" })), "Upload"),
   uploadNew:      folder(button({ label: "📁 Upload new" }), "Upload"),
   uploadReplace:  folder(button({ label: "🔄 Replace w/ upload" }), "Upload"),
 
@@ -125,7 +125,7 @@ const fields = {
   //   32² × depth 4   ≈ 4K cubes
   //   64² × depth 4   ≈ 16K cubes (perf starts mattering)
   //   128² × depth 4  ≈ 65K cubes (heavy — desktop only)
-  resolution:     folder(slider({ min: 16, max: 128, step: 16, default: 32, label: "Resolution" }), "Selected"),
+  resolution:     folder(slider({ min: 16, max: 128, step: 16, default: 64, label: "Resolution" }), "Selected"),
   applyResolution: folder(button({ label: "🔍 Apply resolution" }), "Selected"),
   // Idle motion for the selected object — overlays on top of position/rotation.
   idleNone:   folder(button({ label: "⏹ Idle: None" }), "Selected"),
@@ -286,7 +286,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     depthScale: 0,
     resolution: 32,
     applyResolution: () => {},
-    gridSize: 32,
+    gridSize: 64,
     uploadNew: () => {},
     uploadReplace: () => {},
     aiPrompt: "a green frog",
@@ -351,6 +351,18 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
             THREE.MathUtils.degToRad(0),
             THREE.MathUtils.degToRad(-5),
           );
+          // Auto-promote the seeded sample from voxel's 32-res to this
+          // tool's preferred 64-res so it doesn't read as chunky pixels.
+          // Skip when no source image is available (legacy gallery items).
+          if (seeded.sourceImage) {
+            seeded.grid = imageToGrid(seeded.sourceImage, {
+              gridSize: 64,
+              palette: extractPalette(seeded.sourceImage, 32),
+              useBrightnessAsDepth: false,
+            });
+            seeded.resolution = 64;
+            stateRef.dirty.add(seeded.id);
+          }
         }
       },
     );
