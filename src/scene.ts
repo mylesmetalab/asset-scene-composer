@@ -40,8 +40,8 @@ export function createScene(canvas: HTMLCanvasElement): SceneRefs {
   const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 1000);
   // More front-facing 3/4 view — less top-down than before so objects
   // present like "hero shots" instead of map views.
-  camera.position.set(15, 10, 24);
-  camera.lookAt(0, 4, 0);
+  camera.position.set(18.8, 9.4, -52.3);
+  camera.lookAt(-0.5, 0.1, -1);
 
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
@@ -54,7 +54,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneRefs {
   // Allow looking from below too — full 180° pitch range.
   controls.minPolarAngle = 0;
   controls.maxPolarAngle = Math.PI;
-  controls.target.set(0, 4, 0);
+  controls.target.set(-0.5, 0.1, -1);
   // Arrow keys → pan. listenToKeyEvents needs an element with focus; window
   // works for our single-canvas setup.
   controls.listenToKeyEvents(window as unknown as HTMLElement);

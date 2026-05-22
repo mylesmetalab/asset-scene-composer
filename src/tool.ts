@@ -66,17 +66,17 @@ const fields = {
 
   // ── Camera ─────────────────────────────────────────────────────────
   orbit:       folder(boolean({ default: false, label: "Auto-orbit" }), "Camera"),
-  orbitSpeed:  folder(slider({ min: 0, max: 2, step: 0.05, default: 0.3, label: "Orbit speed" }), "Camera"),
+  orbitSpeed:  folder(slider({ min: 0, max: 2, step: 0.05, default: 0.5, label: "Orbit speed" }), "Camera"),
   fov:         folder(slider({ min: 15, max: 80, step: 1, default: 35, label: "FOV (°)" }), "Camera"),
   // Camera position + target. Moving these snaps the camera; orbit/pan via
   // mouse still works but doesn't update these sliders (read the Info
   // overlay top-right for current values).
-  camX:        folder(slider({ min: -80, max: 80, step: 0.5, default: 15, label: "Cam pos X" }), "Camera"),
-  camY:        folder(slider({ min: -40, max: 80, step: 0.5, default: 10, label: "Cam pos Y" }), "Camera"),
-  camZ:        folder(slider({ min: -80, max: 80, step: 0.5, default: 24, label: "Cam pos Z" }), "Camera"),
-  tgtX:        folder(slider({ min: -40, max: 40, step: 0.5, default: 0, label: "Target X" }), "Camera"),
-  tgtY:        folder(slider({ min: -20, max: 40, step: 0.5, default: 4, label: "Target Y" }), "Camera"),
-  tgtZ:        folder(slider({ min: -40, max: 40, step: 0.5, default: 0, label: "Target Z" }), "Camera"),
+  camX:        folder(slider({ min: -80, max: 80, step: 0.5, default: 18.8, label: "Cam pos X" }), "Camera"),
+  camY:        folder(slider({ min: -40, max: 80, step: 0.5, default: 9.4, label: "Cam pos Y" }), "Camera"),
+  camZ:        folder(slider({ min: -80, max: 80, step: 0.5, default: -52.3, label: "Cam pos Z" }), "Camera"),
+  tgtX:        folder(slider({ min: -40, max: 40, step: 0.5, default: -0.5, label: "Target X" }), "Camera"),
+  tgtY:        folder(slider({ min: -20, max: 40, step: 0.5, default: 0.1, label: "Target Y" }), "Camera"),
+  tgtZ:        folder(slider({ min: -40, max: 40, step: 0.5, default: -1, label: "Target Z" }), "Camera"),
   frameAll:    folder(button({ label: "🔲 Frame all" }), "Camera"),
   focusOn:     folder(button({ label: "🎯 Focus selected" }), "Camera"),
   resetCam:    folder(button({ label: "↻ Reset camera" }), "Camera"),
@@ -260,10 +260,10 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     voxelSize: 1,
     faceStroke: 0.15,
     orbit: false,
-    orbitSpeed: 0.3,
+    orbitSpeed: 0.5,
     fov: 35,
-    camX: 15, camY: 10, camZ: 24,
-    tgtX: 0, tgtY: 4, tgtZ: 0,
+    camX: 18.8, camY: 9.4, camZ: -52.3,
+    tgtX: -0.5, tgtY: 0.1, tgtZ: -1,
     objPosX: 0, objPosY: 0, objPosZ: 0,
     objRotX: 0, objRotY: 0, objRotZ: 0,
     frameAll: () => {},
@@ -342,6 +342,16 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
           } catch { /* fall through with no source */ }
         }
         addObjectFromGrid(stateRef, mushroom.grid, mushroom.prompt, sourceImage);
+        // Apply Myles' preferred default transform for the seeded mushroom.
+        const seeded = stateRef.objects[stateRef.objects.length - 1];
+        if (seeded) {
+          seeded.group.position.set(-1, 0, 0);
+          seeded.group.rotation.set(
+            THREE.MathUtils.degToRad(108),
+            THREE.MathUtils.degToRad(0),
+            THREE.MathUtils.degToRad(-5),
+          );
+        }
       },
     );
 
@@ -364,8 +374,8 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       gallery,
       animTime: 0,
       defaultSpawnType: "resolve",
-      lastCamX: 15, lastCamY: 10, lastCamZ: 24,
-      lastTgtX: 0, lastTgtY: 4, lastTgtZ: 0,
+      lastCamX: 18.8, lastCamY: 9.4, lastCamZ: -52.3,
+      lastTgtX: -0.5, lastTgtY: 0.1, lastTgtZ: -1,
       lastObjPosX: 0, lastObjPosY: 0, lastObjPosZ: 0,
       lastObjRotX: 0, lastObjRotY: 0, lastObjRotZ: 0,
       lastSelectedIdForSliders: null,
