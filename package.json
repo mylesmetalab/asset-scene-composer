@@ -1,0 +1,48 @@
+{
+  "name": "inflated-scene-composer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Compose 3D voxel scenes from painted grids, uploaded images, or AI-generated pixel-art sprites",
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/sync-shell.mjs",
+    "prebuild": "node scripts/sync-shell.mjs",
+    "sync-shell": "node scripts/sync-shell.mjs",
+    "dev": "vite --port 5182",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview --port 5281",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mylesmetalab/recorder": "^0.9.1",
+    "@mylesmetalab/schema": "^0.5.0",
+    "@mylesmetalab/shell": "^0.11.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": "^0.171.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.171.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^5.6.3",
+    "vite": "^8.0.10"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.28.0",
+  "pnpm": {
+    "overrides": {
+      "@mylesmetalab/shell": "link:../generative-shell/packages/shell",
+      "@mylesmetalab/controls": "link:../generative-shell/packages/controls",
+      "@mylesmetalab/schema": "link:../generative-shell/packages/schema",
+      "@mylesmetalab/recorder": "link:../generative-shell/packages/recorder",
+      "@mylesmetalab/tokens": "link:../generative-shell/packages/tokens"
+    }
+  }
+}

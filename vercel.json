@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "node scripts/vercel-install.mjs",
+  "functions": {
+    "api/generate.ts": {
+      "memory": 1024,
+      "maxDuration": 30
+    },
+    "api/sync.ts": {
+      "maxDuration": 15
+    }
+  }
+}
