@@ -2,7 +2,37 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { VoxelGrid } from "./voxelize";
+
+/** Load a GLB from a URL (object URL or remote) into a THREE.Object3D.
+ *  Normalizes scale so the longest dimension is ~16 units and anchors
+ *  the bottom of the bbox at y=0 so the floor shadow lands correctly. */
+export async function loadGlbModel(url: string): Promise<THREE.Object3D> {
+  const loader = new GLTFLoader();
+  const gltf = await loader.loadAsync(url);
+  const model = gltf.scene;
+  model.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = false;
+    }
+  });
+  // Auto-normalize: longest-axis to ~16 units, bottom at y=0.
+  const bbox = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+  const targetHeight = 16;
+  const scale = targetHeight / maxDim;
+  model.scale.setScalar(scale);
+  // Recompute bbox after scaling for accurate y-anchor.
+  const bbox2 = new THREE.Box3().setFromObject(model);
+  const center = new THREE.Vector3();
+  bbox2.getCenter(center);
+  model.position.set(-center.x, -bbox2.min.y, -center.z);
+  return model;
+}
 
 export type SceneRefs = {
   renderer: THREE.WebGLRenderer;
@@ -278,14 +308,20 @@ function disposeGroup(group: THREE.Group): void {
 export function buildVoxelMesh(
   group: THREE.Group,
   _grid: VoxelGrid,
-  opts: { voxelSize: number; baseDepth: number; depthScale: number; faceStroke: number },
+  _opts: { voxelSize: number; baseDepth: number; depthScale: number; faceStroke: number },
   sourceImage?: HTMLImageElement,
+  model?: THREE.Object3D,
 ): void {
   disposeGroup(group);
 
+  // Real 3D model from Tripo — attach directly, this is the canonical path.
+  if (model) {
+    group.add(model);
+    return;
+  }
+
   if (!sourceImage) {
-    // Placeholder for objects with no source (shouldn't happen via the
-    // AI / Upload paths, but library presets land here).
+    // Placeholder for objects with no source (library presets land here).
     const placeholder = new THREE.Mesh(
       new THREE.BoxGeometry(8, 8, 8),
       new THREE.MeshBasicMaterial({ color: 0xcccccc, wireframe: true }),

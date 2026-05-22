@@ -8,7 +8,7 @@ import * as THREE from "three";
 
 import {
   createScene, buildVoxelMesh, exportGltf, applyCameraPreset,
-  frameAll, focusOn, pickObject, updateSelectionOutline,
+  frameAll, focusOn, pickObject, updateSelectionOutline, loadGlbModel,
   type SceneRefs, type GizmoMode,
 } from "./scene";
 import {
@@ -41,6 +41,8 @@ type VoxelObject = {
    *  inside pivot, not group. */
   pivot: THREE.Group;
   sourceImage?: HTMLImageElement;
+  /** Loaded GLB scene from Tripo. Canonical render path for this tool. */
+  model?: THREE.Object3D;
   resolution: number;
   /** Animation state. */
   spawnType: SpawnType;
@@ -424,7 +426,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
         faceStroke: params.faceStroke,
       };
       for (const obj of s.objects) {
-        if (s.dirty.has(obj.id)) buildVoxelMesh(obj.pivot, obj.grid, opts, obj.sourceImage);
+        if (s.dirty.has(obj.id)) buildVoxelMesh(obj.pivot, obj.grid, opts, obj.sourceImage, obj.model);
       }
       s.dirty.clear();
     }
@@ -633,19 +635,26 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       }
     },
 
-    // ── AI generate ────────────────────────────────────────────────
+    // ── AI generate (Tripo text-to-3D) ─────────────────────────────
     async aiGenerateNew(ctx, params) {
-      const result = await aiAndVoxelize(params, ctx.state);
-      if (result) addObjectFromGrid(ctx.state, result.grid, params.aiPrompt.trim() || "ai", result.sourceImage);
+      const result = await tripoGenerate(params, ctx.state);
+      if (!result) return;
+      const name = params.aiPrompt.trim() || "ai";
+      // Use a synthetic placeholder grid for the object scaffold — it's
+      // ignored by the renderer once .model is set.
+      addObjectFromGrid(ctx.state, placeholderGrid(), name, undefined);
+      const sel = ctx.state.objects[ctx.state.objects.length - 1];
+      if (sel) {
+        sel.model = result.model;
+        ctx.state.dirty.add(sel.id);
+      }
     },
     async aiReplace(ctx, params) {
       const sel = selected(ctx.state);
       if (!sel) { alert("Select an object first (click it in the scene), or use 'Generate as new object' instead."); return; }
-      const result = await aiAndVoxelize(params, ctx.state);
+      const result = await tripoGenerate(params, ctx.state);
       if (result) {
-        sel.grid = result.grid;
-        sel.sourceImage = result.sourceImage;
-        sel.resolution = result.grid.width;
+        sel.model = result.model;
         ctx.state.dirty.add(sel.id);
       }
     },
@@ -834,6 +843,96 @@ async function aiAndVoxelize(params: VoxelParams, state: VoxelState): Promise<Vo
     console.warn("Gallery push failed:", err);
   });
   return { grid, sourceImage: cleaned };
+}
+
+/** Synthetic placeholder grid for objects backed by a Tripo GLB. The grid
+ *  is unused by the renderer when obj.model is set; it exists only to
+ *  satisfy the shared VoxelObject scaffolding. 1×1 single empty cell. */
+function placeholderGrid(): VoxelGrid {
+  return {
+    width: 1,
+    height: 1,
+    palette: ["#00000000"],
+    indices: new Uint8Array([0]),
+    depth: new Uint8Array([0]),
+  };
+}
+
+type TripoResult = { model: THREE.Object3D; thumbUrl: string; glbBlobUrl: string };
+
+/** Call /api/tripo to start a text-to-3D task, poll until success, then
+ *  fetch the GLB and load it via GLTFLoader. Surfaces upstream errors via
+ *  alert. Returns null on failure or empty prompt. */
+async function tripoGenerate(params: VoxelParams, state: VoxelState): Promise<TripoResult | null> {
+  const prompt = params.aiPrompt.trim();
+  if (!prompt) return null;
+
+  // 1. Start task.
+  const startResp = await fetch("/api/tripo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!startResp.ok) {
+    const err = await startResp.json().catch(() => ({ error: startResp.statusText }));
+    console.error("Tripo start failed:", err);
+    alert(`Tripo start failed: ${err.error ?? "unknown"}${err.suggestion ? ` — ${err.suggestion}` : ""}`);
+    return null;
+  }
+  const { taskId } = await startResp.json();
+
+  // 2. Poll until success/failure. Tripo says ~110s; we cap at 5 min.
+  const startedAt = Date.now();
+  let glbUrl: string | null = null;
+  let thumbUrl: string | null = null;
+  let lastProgress = -1;
+  while (Date.now() - startedAt < 5 * 60_000) {
+    await new Promise((r) => setTimeout(r, 4000));
+    const pollResp = await fetch(`/api/tripo?taskId=${encodeURIComponent(taskId)}`);
+    if (!pollResp.ok) {
+      const err = await pollResp.json().catch(() => ({ error: pollResp.statusText }));
+      alert(`Tripo poll failed: ${err.error ?? "unknown"}`);
+      return null;
+    }
+    const data = await pollResp.json();
+    if (data.progress !== lastProgress) {
+      lastProgress = data.progress;
+      console.log(`Tripo: ${data.status} ${data.progress}%`);
+    }
+    if (data.status === "success") {
+      glbUrl = data.glbUrl;
+      thumbUrl = data.thumbUrl;
+      break;
+    }
+    if (data.status === "failed" || data.status === "cancelled") {
+      alert(`Tripo task ${data.status}`);
+      return null;
+    }
+  }
+  if (!glbUrl) { alert("Tripo timed out after 5 min."); return null; }
+
+  // 3. Fetch the GLB through our /api/tripo proxy (Tripo's CDN doesn't
+  //    serve CORS headers for cross-origin browsers).
+  const glbResp = await fetch(`/api/tripo?downloadGlb=${encodeURIComponent(glbUrl)}`);
+  if (!glbResp.ok) { alert(`GLB fetch failed: HTTP ${glbResp.status}`); return null; }
+  const glbBlob = await glbResp.blob();
+  const glbBlobUrl = URL.createObjectURL(glbBlob);
+  const model = await loadGlbModel(glbBlobUrl);
+
+  // 4. Best-effort gallery thumbnail (Tripo's rendered preview).
+  if (thumbUrl) {
+    try {
+      const t = await fetch(thumbUrl);
+      if (t.ok) {
+        const tBlob = await t.blob();
+        const tUrl = URL.createObjectURL(tBlob);
+        // Build a fake grid + image so the existing gallery shape accepts it.
+        const img = await loadImageFromDataUrl(tUrl);
+        state.gallery.setLatest(tUrl, img, placeholderGrid(), prompt).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
+  }
+  return { model, thumbUrl: thumbUrl ?? "", glbBlobUrl };
 }
 
 /** Pinned bottom-right overlay listing the camera keybindings. Static text,
