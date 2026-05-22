@@ -327,43 +327,10 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       (grid, prompt, sourceImage) => {
         if (stateRef) addObjectFromGrid(stateRef, grid, prompt, sourceImage);
       },
-      async (items) => {
-        // First-load seed: if the scene is empty and we just pulled a
-        // gallery that includes a mushroom (the canonical starter), add
-        // it. Async because we have to load the cleaned image into an
-        // HTMLImageElement to enable Apply Resolution.
-        if (!stateRef || stateRef.objects.length > 0) return;
-        const mushroom = items.find(i => i.prompt.toLowerCase() === "mushroom");
-        if (!mushroom) return;
-        let sourceImage: HTMLImageElement | undefined;
-        if (mushroom.cleanedDataUrl) {
-          try {
-            sourceImage = await loadImageFromDataUrl(mushroom.cleanedDataUrl);
-          } catch { /* fall through with no source */ }
-        }
-        addObjectFromGrid(stateRef, mushroom.grid, mushroom.prompt, sourceImage);
-        // Apply Myles' preferred default transform for the seeded mushroom.
-        const seeded = stateRef.objects[stateRef.objects.length - 1];
-        if (seeded) {
-          seeded.group.position.set(-1, 0, 0);
-          seeded.group.rotation.set(
-            THREE.MathUtils.degToRad(108),
-            THREE.MathUtils.degToRad(0),
-            THREE.MathUtils.degToRad(-5),
-          );
-          // Auto-promote the seeded sample from voxel's 32-res to this
-          // tool's preferred 64-res so it doesn't read as chunky pixels.
-          // Skip when no source image is available (legacy gallery items).
-          if (seeded.sourceImage) {
-            seeded.grid = imageToGrid(seeded.sourceImage, {
-              gridSize: 64,
-              palette: extractPalette(seeded.sourceImage, 32),
-              useBrightnessAsDepth: false,
-            });
-            seeded.resolution = 64;
-            stateRef.dirty.add(seeded.id);
-          }
-        }
+      async (_items) => {
+        // Auto-seed intentionally disabled — voxel's shared sample gallery
+        // contains pixel-art assets that look wrong rendered as planes here.
+        // Users generate their first asset via AI on this tool's own gallery.
       },
     );
 
@@ -457,7 +424,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
         faceStroke: params.faceStroke,
       };
       for (const obj of s.objects) {
-        if (s.dirty.has(obj.id)) buildVoxelMesh(obj.pivot, obj.grid, opts);
+        if (s.dirty.has(obj.id)) buildVoxelMesh(obj.pivot, obj.grid, opts, obj.sourceImage);
       }
       s.dirty.clear();
     }

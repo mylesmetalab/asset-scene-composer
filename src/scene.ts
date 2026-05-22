@@ -262,77 +262,61 @@ function disposeGroup(group: THREE.Group): void {
   }
 }
 
-/** Rebuild the object's mesh from a grid. The "inflated" style takes the
- *  silhouette mask from the grid and produces smooth rounded-box geometry
- *  instead of voxel cubes — chunkier units, smoother shading, soft material.
+/** Render an object as the Gemini source image on a textured plane.
+ *  The voxel grid is ignored for geometry now — its only role is signature
+ *  compat with shared scaffolding code. The plane gets faux-thickness via
+ *  duplicated layers at small z-offsets per baseDepth, so a quarter-rotate
+ *  shows depth instead of revealing a card.
  *
- *  PLACEHOLDER: Currently uses RoundedBoxGeometry per palette color, sized
- *  to ~2× voxel scale, with a glossy MeshPhongMaterial. The real "Discord
- *  pillow" look needs a custom subsurface-ish shader, soft displacement
- *  along normals, and a proper rounded silhouette extrude (not just rounded
- *  cubes). Wiring + signature kept identical to voxel-scene-composer so
- *  cross-tool changes to upstream code (animations, camera, gizmo, etc)
- *  port cleanly.
+ *  Inflated specifically: MeshLambertMaterial picks up the scene's
+ *  directional + ambient light. With Gemini already returning glossy 3D
+ *  pillow renders, the lighting layered on top sells the in-scene
+ *  presence at glancing angles.
  *
- *  Parameter names preserved from voxel for cross-repo diff readability;
- *  voxelSize → unit size, faceStroke → outline opacity (unused here). */
+ *  Wireframe placeholder when no source image (library starters, etc.) —
+ *  empty groups would otherwise crash bbox / outline / framing code. */
 export function buildVoxelMesh(
   group: THREE.Group,
-  grid: VoxelGrid,
+  _grid: VoxelGrid,
   opts: { voxelSize: number; baseDepth: number; depthScale: number; faceStroke: number },
+  sourceImage?: HTMLImageElement,
 ): void {
   disposeGroup(group);
 
-  const { width: w, height: h, indices, depth, palette } = grid;
-  const { voxelSize, baseDepth, depthScale } = opts;
-
-  // Use a chunkier unit size — inflated forms are bigger + smoother than
-  // voxels. Each "unit" covers a 2x2 cell area to reduce instance count
-  // and give a rounder silhouette.
-  const unitSize = voxelSize * 1.6;
-
-  const byColor = new Map<number, { positions: THREE.Vector3[] }>();
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      const pIdx = indices[i];
-      if (pIdx === 0) continue;
-      const dNorm = depth[i] / 255;
-      const layers = Math.max(1, Math.round(baseDepth + dNorm * depthScale));
-      for (let z = 0; z < layers; z++) {
-        const px = (x - w / 2 + 0.5) * voxelSize;
-        const py = z * voxelSize + voxelSize / 2;
-        const pz = (y - h / 2 + 0.5) * voxelSize;
-        const bucket = byColor.get(pIdx) ?? { positions: [] };
-        bucket.positions.push(new THREE.Vector3(px, py, pz));
-        byColor.set(pIdx, bucket);
-      }
-    }
+  if (!sourceImage) {
+    // Placeholder for objects with no source (shouldn't happen via the
+    // AI / Upload paths, but library presets land here).
+    const placeholder = new THREE.Mesh(
+      new THREE.BoxGeometry(8, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xcccccc, wireframe: true }),
+    );
+    placeholder.position.y = 4;
+    group.add(placeholder);
+    return;
   }
 
-  // RoundedBoxGeometry is in three/examples — fall back to a smoothed
-  // SphereGeometry if importing fails. Each unit is a softened block.
-  const unitGeo = new THREE.SphereGeometry(unitSize * 0.65, 14, 12);
+  // Aspect-ratio-preserved sprite sized ~16 units tall. Using THREE.Sprite
+  // (vs a plane) means the object always faces the camera — no edge-on
+  // collapse when orbiting, no need to manually billboard each tick.
+  // SpriteMaterial doesn't pick up scene lighting, but that's fine here
+  // because Gemini already returns a fully-shaded 3D-rendered pillow.
+  const targetHeight = 16;
+  const aspect = sourceImage.naturalWidth / sourceImage.naturalHeight;
 
-  for (const [pIdx, { positions }] of byColor) {
-    const color = palette[pIdx] ?? "#ff00ff";
-    // Phong shading reads softer than Lambert — light highlights help sell
-    // the "inflated rubber" look. Real version would use a custom shader
-    // with subsurface scattering approximation.
-    const mat = new THREE.MeshPhongMaterial({
-      color,
-      shininess: 35,
-      specular: 0x222222,
-    });
-    const inst = new THREE.InstancedMesh(unitGeo, mat, positions.length);
-    inst.castShadow = true;
-    inst.receiveShadow = true;
-    const m = new THREE.Matrix4();
-    for (let i = 0; i < positions.length; i++) {
-      m.makeTranslation(positions[i].x, positions[i].y, positions[i].z);
-      inst.setMatrixAt(i, m);
-    }
-    inst.instanceMatrix.needsUpdate = true;
-    group.add(inst);
-  }
+  const texture = new THREE.Texture(sourceImage);
+  texture.needsUpdate = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = 4;
+
+  const mat = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    alphaTest: 0.5,
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(targetHeight * aspect, targetHeight, 1);
+  sprite.position.y = targetHeight / 2;
+  group.add(sprite);
 }
