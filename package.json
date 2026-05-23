@@ -1,5 +1,5 @@
 {
-  "name": "inflated-scene-composer",
+  "name": "asset-scene-composer",
   "version": "0.0.0",
   "private": true,
   "description": "Compose 3D voxel scenes from painted grids, uploaded images, or AI-generated pixel-art sprites",

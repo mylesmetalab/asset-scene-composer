@@ -262,7 +262,7 @@ function setSelection(state: VoxelState, id: string | null): void {
 
 export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
   contractVersion: 2,
-  name: "Inflated Scene Composer",
+  name: "Asset Scene Composer",
   description: "Compose 3D voxel scenes — click any object to select, drag the gizmo to move/rotate/scale",
   schema,
   defaults: {

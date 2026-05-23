@@ -20,7 +20,7 @@
 
 ## Re-deploy
 
-Use `/publish inflated-scene-composer` — routes through the hub.
+Use `/publish asset-scene-composer` — routes through the hub.
 
 ## Audit status
 

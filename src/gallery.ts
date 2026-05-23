@@ -9,8 +9,8 @@
 
 import type { VoxelGrid } from "./voxelize";
 
-const STORAGE_KEY = "inflated-scene-gallery-v1";
-const SYNC_CODE_KEY = "inflated-sync-code-v1";
+const STORAGE_KEY = "asset-scene-gallery-v1";
+const SYNC_CODE_KEY = "asset-sync-code-v1";
 const MAX_GALLERY = 24;
 const THUMB_SIZE = 192;
 const SYNC_DEBOUNCE_MS = 1500;

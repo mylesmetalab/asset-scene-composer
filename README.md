@@ -1,31 +1,29 @@
-# inflated-scene-composer
+# asset-scene-composer
 
-Compose 3D scenes of soft, pillowy, inflated objects — like the Discord controller mascot. Forked from `voxel-scene-composer`; shares the AI/gallery/sync/camera/recording infrastructure. Only the renderer differs: silhouettes get extruded with rounded edges and rendered with a soft material instead of being chunked into cubes.
+Compose 3D scenes from uploaded GLB and OBJ asset files. Drop in pre-made 3D models (from Sketchfab, Spline, Blender, etc.) and arrange them into scenes with a camera, transform gizmo, and animation system.
+
+Sibling tool: `voxel-scene-composer` — same scene-composer infrastructure, but for hand-painted voxel sprites instead of imported meshes.
 
 ## Status
 
-🚧 **Placeholder renderer.** Currently uses smoothed rounded boxes from the silhouette mask. The real inflated look (subsurface-ish shading, soft pillow normals, rounded silhouettes per the Discord controller pic) is the next chunk of work.
+🚧 In progress. Forked from `inflated-scene-composer` after concluding that AI 3D generation can't yet produce the soft inflated/plush aesthetic reliably. Pivoting to deterministic asset import instead — designers source their hero models from a 3D library, the tool handles scene composition.
 
-## What's shared with sibling tools
+## What's here
 
-Anything not directly tied to the inflated look:
-- Gemini AI proxy + image → silhouette pipeline
-- Flood-fill background removal
-- Three.js scene + OrbitControls + TransformControls
-- Camera utilities (Frame All, Focus selected, presets, numeric sliders)
-- Per-object gizmo + selection outline
-- Spawn animations (drop / pop / build / zoom / resolve)
-- Idle motions (bob / spin / pulse / wobble)
+- Three.js scene with floor shadow + soft lighting
+- OrbitControls camera (rotate / pan / zoom + numeric sliders + presets)
+- TransformControls gizmo + click-to-select per object
+- Multi-object scene (add / duplicate / delete)
+- Spawn animations (drop / pop / build / zoom) + idle motions (bob / spin / pulse / wobble)
 - Cross-device gallery sync via Vercel Blob
 - PNG / MP4 / GLB export
 - Live info readout overlay
-- Camera tips overlay
 
-If you fix a bug in any of those, port the change to the sibling repos too:
-- `voxel-scene-composer`
-- `line-drawing-scene-composer`
+## What's coming
 
-When all three feel stable, extract the shared core into a `@mylesmetalab/scene-composer` package (Rule of Three).
+- **Upload GLB / OBJ** file picker that loads via GLTFLoader / OBJLoader and adds to scene
+- Persist uploaded assets in the gallery as blobs (so cross-device sync brings them along)
+- Maybe a small built-in starter library (free assets bundled with the tool)
 
 ## Quick start
 
@@ -33,5 +31,3 @@ When all three feel stable, extract the shared core into a `@mylesmetalab/scene-
 pnpm install
 pnpm dev   # http://localhost:5182
 ```
-
-Set `GEMINI_API_KEY` in `.env.local` for AI generation.
