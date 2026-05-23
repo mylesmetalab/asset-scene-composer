@@ -14,6 +14,16 @@ export const config = { runtime: "edge" };
 const TRIPO_BASE = "https://api.tripo3d.ai/v2/openapi";
 const MODEL_VERSION = "v3.1-20260211";
 
+// Step 3 of the 1+2+3 inflated-look stack. Tripo's text_to_model internally
+// generates a 2D reference image first, then meshes it — so the prompt is
+// effectively an image-gen prompt. Steering the reference image toward
+// inflated/plush aesthetics tilts the resulting geometry without needing a
+// second API call. Stacks with the vertex-displacement inflation slider
+// (step 1) and any future stylize-task work (step 2).
+function inflatePrompt(userPrompt: string): string {
+  return `soft inflated plush 3D toy of ${userPrompt}, rounded puffy pillow form, glossy vinyl-like material, smooth bulbous shapes, single object centered, no scenery, no text`;
+}
+
 export default async function handler(req: Request): Promise<Response> {
   try {
     const key = process.env.TRIPO_API_KEY;
@@ -36,7 +46,7 @@ export default async function handler(req: Request): Promise<Response> {
         },
         body: JSON.stringify({
           type: "text_to_model",
-          prompt: body.prompt,
+          prompt: inflatePrompt(body.prompt),
           model_version: MODEL_VERSION,
         }),
       });

@@ -47,6 +47,9 @@ function geminiDevProxy(key: string) {
 function tripoDevProxy(key: string) {
   const TRIPO_BASE = "https://api.tripo3d.ai/v2/openapi";
   const MODEL_VERSION = "v3.1-20260211";
+  // Mirrors inflatePrompt() in api/tripo.ts. Keep in sync.
+  const inflatePrompt = (p: string) =>
+    `soft inflated plush 3D toy of ${p}, rounded puffy pillow form, glossy vinyl-like material, smooth bulbous shapes, single object centered, no scenery, no text`;
   return {
     name: "tripo-dev-proxy",
     configureServer(server: any) {
@@ -61,7 +64,7 @@ function tripoDevProxy(key: string) {
             const resp = await fetch(`${TRIPO_BASE}/task`, {
               method: "POST",
               headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ type: "text_to_model", prompt, model_version: MODEL_VERSION }),
+              body: JSON.stringify({ type: "text_to_model", prompt: inflatePrompt(prompt), model_version: MODEL_VERSION }),
             });
             const data = await resp.json();
             if (data.code !== 0) { res.statusCode = 502; res.end(JSON.stringify({ error: data.message, code: data.code, suggestion: data.suggestion })); return; }
