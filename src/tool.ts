@@ -1,61 +1,42 @@
 import { defineGenerativeTool } from "@mylesmetalab/shell";
 import { z } from "zod";
 import {
-  slider, color, folder, structural, boolean, button, text,
+  slider, color, folder, boolean, button,
 } from "@mylesmetalab/schema";
 import { download, exportNow, recordCanvas } from "@mylesmetalab/recorder";
 import * as THREE from "three";
 
 import {
-  createScene, buildVoxelMesh, exportGltf, applyCameraPreset,
-  frameAll, focusOn, pickObject, updateSelectionOutline, loadGlbModel, applyInflation,
+  createScene, exportGltf, applyCameraPreset,
+  frameAll, focusOn, pickObject, updateSelectionOutline, loadGlbModel,
   type SceneRefs, type GizmoMode,
 } from "./scene";
-import {
-  starterSmiley, starterHeart, starterMushroom,
-  imageToGrid, loadImageFromDataUrl, loadImageFromFile,
-  extractPalette, removeBackground,
-  type VoxelGrid,
-} from "./voxelize";
 import { mountGalleryOverlay, type GalleryHandle } from "./gallery";
-
-const DEFAULT_PALETTE = [
-  "#00000000", "#ffffff", "#000000", "#3a4dff", "#22aa3a",
-  "#e23838", "#f9c80e", "#9b59b6", "#1abc9c", "#e67e22",
-  "#34495e", "#ecf0f1", "#7f8c8d", "#2980b9", "#c0392b", "#16a085",
-];
 
 const MAX_OBJECTS = 16;
 
-type SpawnType = "none" | "drop" | "pop" | "build" | "zoom" | "resolve";
+type SpawnType = "none" | "drop" | "pop" | "build" | "zoom";
 type IdleType = "none" | "bob" | "spin" | "pulse" | "wobble";
 
-type VoxelObject = {
+type SceneObject = {
   id: string;
   name: string;
-  grid: VoxelGrid;
   /** User-controlled transform (what the gizmo manipulates). */
   group: THREE.Group;
   /** Inner pivot — animations apply here, leaving group.position/rotation
-   *  alone so gizmo edits and animations don't fight. The voxel cubes live
-   *  inside pivot, not group. */
+   *  alone so gizmo edits and animations don't fight. The asset's loaded
+   *  3D model lives inside pivot, not group. */
   pivot: THREE.Group;
-  sourceImage?: HTMLImageElement;
-  /** Loaded GLB scene from Tripo. Canonical render path for this tool. */
+  /** Loaded asset (a GLB/OBJ scene). Attached as a child of pivot. */
   model?: THREE.Object3D;
-  /** Vertex-displacement inflation applied to this object's model.
-   *  Re-applied non-destructively from cached originals on each change. */
-  inflation: number;
-  resolution: number;
+  /** Asset filename or upload label, shown in the info overlay. */
+  sourceLabel?: string;
   /** Animation state. */
   spawnType: SpawnType;
   /** spawnedAt is in animTime units (only advances when playing=true). */
   spawnedAt: number;
   idleType: IdleType;
   idleSpeed: number;
-  /** Cached grids at intermediate resolutions, used by Spawn: Resolve. */
-  resolveCache?: Map<number, VoxelGrid>;
-  lastResolvedRes?: number;
   /** When true, fire a Frame-All at spawn-end. Set on add + replay,
    *  cleared once handled. Avoids framing during the spawn animation
    *  when the bbox is mid-transition. */
@@ -66,8 +47,6 @@ const fields = {
   // ── Scene ──────────────────────────────────────────────────────────
   transparentBg: folder(boolean({ default: false, label: "Transparent BG" }), "Scene"),
   background:    folder(color({ default: "#ffffff", label: "Background" }), "Scene"),
-  voxelSize:     folder(structural(slider({ min: 0.4, max: 1.5, step: 0.05, default: 1, label: "Voxel size" })), "Scene"),
-  faceStroke:    folder(structural(slider({ min: 0, max: 1, step: 0.05, default: 0.15, label: "Face stroke" })), "Scene"),
 
   // ── Camera ─────────────────────────────────────────────────────────
   orbit:       folder(boolean({ default: false, label: "Auto-orbit" }), "Camera"),
@@ -90,20 +69,8 @@ const fields = {
   presetFront: folder(button({ label: "📐 Front" }), "Camera"),
   presetTop:   folder(button({ label: "📐 Top-down" }), "Camera"),
 
-  // ── Library (presets — instant adds) ───────────────────────────────
-  addSmiley:    folder(button({ label: "➕ Add smiley" }), "Library"),
-  addHeart:     folder(button({ label: "➕ Add heart" }), "Library"),
-  addMushroom:  folder(button({ label: "➕ Add mushroom" }), "Library"),
-
-  // ── AI: generate a new object from text ────────────────────────────
-  aiPrompt:       folder(text({ default: "a green frog", label: "Prompt" }), "AI"),
-  aiGenerateNew:  folder(button({ label: "✨ Generate new" }), "AI"),
-  aiReplace:      folder(button({ label: "🔄 Replace with AI" }), "AI"),
-
-  // ── Upload an image (PNG / JPG / WebP) ─────────────────────────────
-  gridSize:       folder(structural(slider({ min: 8, max: 128, step: 1, default: 64, label: "Grid size" })), "Upload"),
-  uploadNew:      folder(button({ label: "📁 Upload new" }), "Upload"),
-  uploadReplace:  folder(button({ label: "🔄 Replace w/ upload" }), "Upload"),
+  // ── Upload (GLB / OBJ asset files) ─────────────────────────────────
+  uploadAsset:  folder(button({ label: "📁 Upload .glb / .obj" }), "Upload"),
 
   // ── Selected (only meaningful when an object is selected) ──────────
   // Click any object on the canvas to select. The magenta wireframe +
@@ -120,22 +87,6 @@ const fields = {
   objRotX:    folder(slider({ min: -180, max: 180, step: 1, default: 0, label: "Rot X (°)" }), "Selected"),
   objRotY:    folder(slider({ min: -180, max: 180, step: 1, default: 0, label: "Rot Y (°)" }), "Selected"),
   objRotZ:    folder(slider({ min: -180, max: 180, step: 1, default: 0, label: "Rot Z (°)" }), "Selected"),
-  // Pillow-up the selected mesh by pushing verts along their normals.
-  // Reapplied non-destructively from cached originals so the slider can
-  // sweep freely without compounding.
-  inflation:  folder(slider({ min: 0, max: 0.5, step: 0.01, default: 0.15, label: "Inflation" }), "Selected"),
-  baseDepth:      folder(structural(slider({ min: 1, max: 16, step: 1, default: 2, label: "Base depth" })), "Selected"),
-  depthScale:     folder(structural(slider({ min: 0, max: 16, step: 1, default: 0, label: "Depth from light" })), "Selected"),
-  // Per-object resolution. Slider value is the target; "Apply" button
-  // re-voxelizes the selected object's stored source image at that
-  // resolution. Starter sprites (smiley/heart/mushroom) have no source
-  // image so the button alerts instead. Higher = more detail, more voxels:
-  //   16² × depth 4   ≈ 1K cubes  (default, fast)
-  //   32² × depth 4   ≈ 4K cubes
-  //   64² × depth 4   ≈ 16K cubes (perf starts mattering)
-  //   128² × depth 4  ≈ 65K cubes (heavy — desktop only)
-  resolution:     folder(slider({ min: 16, max: 128, step: 16, default: 64, label: "Resolution" }), "Selected"),
-  applyResolution: folder(button({ label: "🔍 Apply resolution" }), "Selected"),
   // Idle motion for the selected object — overlays on top of position/rotation.
   idleNone:   folder(button({ label: "⏹ Idle: None" }), "Selected"),
   idleBob:    folder(button({ label: "↕ Idle: Bob" }), "Selected"),
@@ -154,7 +105,6 @@ const fields = {
   spawnPop:     folder(button({ label: "💥 Spawn: Pop" }), "Motion"),
   spawnBuild:   folder(button({ label: "🔨 Spawn: Build" }), "Motion"),
   spawnZoom:    folder(button({ label: "🚀 Spawn: Zoom" }), "Motion"),
-  spawnResolve: folder(button({ label: "🎬 Spawn: Resolve (chunky → fine)" }), "Motion"),
   spawnNone:    folder(button({ label: "⏹ Spawn: None" }), "Motion"),
   // 1.0 = ~0.9s spawn (default). 0.25 = ~3.6s, 4.0 = ~225ms.
   spawnSpeed:   folder(slider({ min: 0.25, max: 4, step: 0.05, default: 1, label: "Spawn speed" }), "Motion"),
@@ -175,7 +125,7 @@ const fields = {
 const schema = z.object(fields);
 type VoxelParams = z.infer<typeof schema>;
 type VoxelState = SceneRefs & {
-  objects: VoxelObject[];
+  objects: SceneObject[];
   selectedId: string | null;
   dirty: Set<string>;
   cleanupClick: () => void;
@@ -192,7 +142,6 @@ type VoxelState = SceneRefs & {
   lastTgtX: number; lastTgtY: number; lastTgtZ: number;
   lastObjPosX: number; lastObjPosY: number; lastObjPosZ: number;
   lastObjRotX: number; lastObjRotY: number; lastObjRotZ: number;
-  lastInflation: number;
   lastSelectedIdForSliders: string | null;
   /** Live info readout overlay (top-right corner). */
   info: InfoHandle;
@@ -206,7 +155,6 @@ type InfoData = {
     name: string;
     pos: [number, number, number];
     rotDeg: [number, number, number];
-    resolution: number;
   };
 };
 
@@ -217,37 +165,34 @@ type InfoHandle = {
 
 let objCounter = 0;
 function makeObject(
-  starter: () => VoxelGrid,
   name: string,
   sceneRoot: THREE.Group,
   animTime: number,
   spawnType: SpawnType,
-): VoxelObject {
+): SceneObject {
   const id = `obj-${++objCounter}`;
   const group = new THREE.Group();
-  group.userData.voxelObjectId = id;
+  group.userData.sceneObjectId = id;
   sceneRoot.add(group);
-  // Pivot is the child the animation system manipulates. The voxel mesh
-  // gets added to pivot, not group.
+  // Pivot is the child the animation system manipulates. The loaded
+  // asset mesh is added to pivot, not group, so spawn/idle transforms
+  // overlay on top of the user's gizmo-driven group transform.
   const pivot = new THREE.Group();
   group.add(pivot);
-  const grid = starter();
   return {
-    id, name, grid, group, pivot,
-    resolution: grid.width,
+    id, name, group, pivot,
     spawnType, spawnedAt: animTime,
     idleType: "none", idleSpeed: 1,
     framePending: true,
-    inflation: 0,
   };
 }
 
-function findById(state: VoxelState, id: string | null): VoxelObject | null {
+function findById(state: VoxelState, id: string | null): SceneObject | null {
   if (!id) return null;
   return state.objects.find((o) => o.id === id) ?? null;
 }
 
-function selected(state: VoxelState): VoxelObject | null {
+function selected(state: VoxelState): SceneObject | null {
   return findById(state, state.selectedId);
 }
 
@@ -268,8 +213,6 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
   defaults: {
     transparentBg: false,
     background: "#ffffff",
-    voxelSize: 1,
-    faceStroke: 0.15,
     orbit: false,
     orbitSpeed: 0.5,
     fov: 35,
@@ -277,7 +220,6 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     tgtX: -0.5, tgtY: 0.1, tgtZ: -1,
     objPosX: 0, objPosY: 0, objPosZ: 0,
     objRotX: 0, objRotY: 0, objRotZ: 0,
-    inflation: 0.15,
     frameAll: () => {},
     focusOn: () => {},
     resetCam: () => {},
@@ -285,31 +227,18 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     preset34: () => {},
     presetFront: () => {},
     presetTop: () => {},
-    addSmiley: () => {},
-    addHeart: () => {},
-    addMushroom: () => {},
     duplicate: () => {},
     removeActive: () => {},
     deselect: () => {},
     gizmoTranslate: () => {},
     gizmoRotate: () => {},
     gizmoScale: () => {},
-    baseDepth: 2,
-    depthScale: 0,
-    resolution: 32,
-    applyResolution: () => {},
-    gridSize: 64,
-    uploadNew: () => {},
-    uploadReplace: () => {},
-    aiPrompt: "a green frog",
-    aiGenerateNew: () => {},
-    aiReplace: () => {},
+    uploadAsset: () => {},
     playing: true,
     spawnDrop: () => {},
     spawnPop: () => {},
     spawnBuild: () => {},
     spawnZoom: () => {},
-    spawnResolve: () => {},
     spawnNone: () => {},
     spawnSpeed: 1,
     replayScene: () => {},
@@ -335,16 +264,14 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
 
     // Lazy-bind so the gallery's onPick closure can reach `state` after init.
     let stateRef: VoxelState | null = null;
+    // Gallery is currently a stub — the upload pipeline lands assets directly
+    // into the scene, not into a persistent gallery. Cross-device sync of
+    // uploaded GLBs is on the roadmap (see README) but not wired yet.
     const gallery = mountGalleryOverlay(
-      (grid, prompt, sourceImage) => {
-        if (stateRef) addObjectFromGrid(stateRef, grid, prompt, sourceImage);
-      },
-      async (_items) => {
-        // Auto-seed intentionally disabled — voxel's shared sample gallery
-        // contains pixel-art assets that look wrong rendered as planes here.
-        // Users generate their first asset via AI on this tool's own gallery.
-      },
+      () => { /* asset gallery onPick not implemented yet */ },
+      async (_items) => { /* no auto-seed */ },
     );
+    void stateRef;
 
     // Camera tips overlay — pinned bottom-right, mirrors the gallery bottom-left.
     // Always-visible static text so users discover the right-drag/shift-drag/arrow
@@ -364,12 +291,11 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       tipsCleanup: tips.cleanup,
       gallery,
       animTime: 0,
-      defaultSpawnType: "resolve",
+      defaultSpawnType: "drop",
       lastCamX: 18.8, lastCamY: 9.4, lastCamZ: -52.3,
       lastTgtX: -0.5, lastTgtY: 0.1, lastTgtZ: -1,
       lastObjPosX: 0, lastObjPosY: 0, lastObjPosZ: 0,
       lastObjRotX: 0, lastObjRotY: 0, lastObjRotZ: 0,
-      lastInflation: 0.15,
       lastSelectedIdForSliders: null,
       info,
     };
@@ -387,7 +313,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       const tc = state.transformControls as unknown as { dragging?: boolean };
       if (tc.dragging) return;
       const hit = pickObject(canvas, refs.camera, refs.sceneRoot, e.clientX, e.clientY);
-      setSelection(state, hit?.userData.voxelObjectId ?? null);
+      setSelection(state, hit?.userData.sceneObjectId ?? null);
     };
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointerup", onUp);
@@ -414,30 +340,23 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     for (const obj of s.objects) {
       if (obj.id === s.selectedId) obj.idleSpeed = params.idleSpeed;
       applyObjectAnimation(obj, s.animTime, params.playing, params.spawnSpeed);
-      maybeStepResolveSpawn(obj, s.animTime, s.dirty, params.spawnSpeed);
-      // Fire frame-all once the spawn animation completes AND, for resolve
-      // spawns, the final resolution has actually been applied (the resolve
-      // loop bounces between intermediate resolutions; we need the last
-      // one to be the target). Also skip if a rebuild is queued.
+      // Fire frame-all once the spawn animation completes. Skip if a
+      // rebuild is queued (waiting for mesh to settle into final bbox).
       const animDone = (s.animTime - obj.spawnedAt) >= effectiveSpawnDur;
-      const resDone = obj.spawnType !== "resolve" || obj.lastResolvedRes === obj.resolution;
-      if (obj.framePending && animDone && resDone && !s.dirty.has(obj.id)) {
+      if (obj.framePending && animDone && !s.dirty.has(obj.id)) {
         obj.framePending = false;
         needsFrameAll = true;
       }
     }
     if (needsFrameAll) frameAll(s.camera, s.controls, s.sceneRoot);
 
-    // Rebuild any dirty objects' meshes.
+    // Mesh rebuilds: attach a freshly-loaded model to its object's pivot.
     if (s.dirty.size > 0) {
-      const opts = {
-        voxelSize: params.voxelSize,
-        baseDepth: params.baseDepth,
-        depthScale: params.depthScale,
-        faceStroke: params.faceStroke,
-      };
       for (const obj of s.objects) {
-        if (s.dirty.has(obj.id)) buildVoxelMesh(obj.pivot, obj.grid, opts, obj.sourceImage, obj.model);
+        if (!s.dirty.has(obj.id)) continue;
+        // Clear old children (in case this is a re-upload replacing the model).
+        while (obj.pivot.children.length > 0) obj.pivot.remove(obj.pivot.children[0]);
+        if (obj.model) obj.pivot.add(obj.model);
       }
       s.dirty.clear();
     }
@@ -506,7 +425,6 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       s.lastObjRotX = THREE.MathUtils.radToDeg(sel.group.rotation.x);
       s.lastObjRotY = THREE.MathUtils.radToDeg(sel.group.rotation.y);
       s.lastObjRotZ = THREE.MathUtils.radToDeg(sel.group.rotation.z);
-      s.lastInflation = sel.inflation;
       s.lastSelectedIdForSliders = s.selectedId;
     }
     if (sel) {
@@ -521,12 +439,6 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
           THREE.MathUtils.degToRad(params.objRotZ),
         );
         s.lastObjRotX = params.objRotX; s.lastObjRotY = params.objRotY; s.lastObjRotZ = params.objRotZ;
-      }
-      // Inflation — re-deform from cached originals on every change.
-      if (params.inflation !== s.lastInflation) {
-        sel.inflation = params.inflation;
-        if (sel.model) applyInflation(sel.model, params.inflation);
-        s.lastInflation = params.inflation;
       }
     }
 
@@ -552,7 +464,6 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
           THREE.MathUtils.radToDeg(sel.group.rotation.y),
           THREE.MathUtils.radToDeg(sel.group.rotation.z),
         ],
-        resolution: sel.resolution,
       } : null,
     });
 
@@ -575,7 +486,6 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     spawnPop(ctx)     { ctx.state.defaultSpawnType = "pop"; },
     spawnBuild(ctx)   { ctx.state.defaultSpawnType = "build"; },
     spawnZoom(ctx)    { ctx.state.defaultSpawnType = "zoom"; },
-    spawnResolve(ctx) { ctx.state.defaultSpawnType = "resolve"; },
     spawnNone(ctx)    { ctx.state.defaultSpawnType = "none"; },
     // Re-trigger spawn for every object in the scene.
     replayScene(ctx) {
@@ -583,8 +493,6 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       for (const obj of ctx.state.objects) {
         obj.spawnedAt = now;
         obj.framePending = true; // re-frame after the replay finishes
-        // Force resolve animation to restart from chunky resolution.
-        obj.lastResolvedRes = undefined;
       }
     },
 
@@ -613,15 +521,11 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     gizmoScale(ctx) { setGizmoMode(ctx.state, "scale"); },
 
     // ── Scene object management ────────────────────────────────────
-    addSmiley(ctx) { addNewObject(ctx.state, starterSmiley, "smiley"); },
-    addHeart(ctx) { addNewObject(ctx.state, starterHeart, "heart"); },
-    addMushroom(ctx) { addNewObject(ctx.state, starterMushroom, "mushroom"); },
     duplicate(ctx) {
       const src = selected(ctx.state);
-      if (!src) return;
-      // Inherit sourceImage so the duplicate can also be re-voxelized at
-      // different resolutions. Image refs are shared (immutable), no copy needed.
-      addObjectFromGrid(ctx.state, cloneGrid(src.grid), `${src.name}-copy`, src.sourceImage);
+      if (!src || !src.model) return;
+      const clonedModel = src.model.clone(true);
+      addObjectWithModel(ctx.state, clonedModel, `${src.name}-copy`, src.sourceLabel);
     },
     removeActive(ctx) {
       const s = ctx.state;
@@ -636,64 +540,10 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     },
     deselect(ctx) { setSelection(ctx.state, null); },
 
-    // ── Upload (image → voxels) ────────────────────────────────────
-    async uploadNew(ctx, params) {
-      const result = await uploadAndVoxelize(params);
-      if (result) addObjectFromGrid(ctx.state, result.grid, "upload", result.sourceImage);
-    },
-    async uploadReplace(ctx, params) {
-      const sel = selected(ctx.state);
-      if (!sel) { alert("Select an object first (click it in the scene), or use 'Upload as new object' instead."); return; }
-      const result = await uploadAndVoxelize(params);
-      if (result) {
-        sel.grid = result.grid;
-        sel.sourceImage = result.sourceImage;
-        sel.resolution = result.grid.width;
-        ctx.state.dirty.add(sel.id);
-      }
-    },
-
-    // ── AI generate (Tripo text-to-3D) ─────────────────────────────
-    async aiGenerateNew(ctx, params) {
-      const result = await tripoGenerate(params, ctx.state);
-      if (!result) return;
-      const name = params.aiPrompt.trim() || "ai";
-      // Use a synthetic placeholder grid for the object scaffold — it's
-      // ignored by the renderer once .model is set.
-      addObjectFromGrid(ctx.state, placeholderGrid(), name, undefined);
-      const sel = ctx.state.objects[ctx.state.objects.length - 1];
-      if (sel) {
-        sel.model = result.model;
-        ctx.state.dirty.add(sel.id);
-      }
-    },
-    async aiReplace(ctx, params) {
-      const sel = selected(ctx.state);
-      if (!sel) { alert("Select an object first (click it in the scene), or use 'Generate as new object' instead."); return; }
-      const result = await tripoGenerate(params, ctx.state);
-      if (result) {
-        sel.model = result.model;
-        ctx.state.dirty.add(sel.id);
-      }
-    },
-
-    // ── Resolution (per-object) ────────────────────────────────────
-    applyResolution(ctx, params) {
-      const sel = selected(ctx.state);
-      if (!sel) { alert("Select an object first (click it in the scene)."); return; }
-      if (!sel.sourceImage) {
-        alert("Resolution control only applies to objects with a source image (uploaded or AI-generated). Built-in starters use their authored grid.");
-        return;
-      }
-      const target = params.resolution;
-      if (sel.resolution === target) return; // no-op
-      sel.grid = imageToGrid(sel.sourceImage, {
-        gridSize: target,
-        palette: extractPalette(sel.sourceImage, 32),
-        useBrightnessAsDepth: params.depthScale > 0,
-      });
-      sel.resolution = target;
-      ctx.state.dirty.add(sel.id);
+    // ── Upload (GLB / OBJ asset) ───────────────────────────────────
+    async uploadAsset(ctx) {
+      const result = await pickAndLoadAsset();
+      if (result) addObjectWithModel(ctx.state, result.model, result.name, result.name);
     },
 
     // ── Exports ────────────────────────────────────────────────────
@@ -710,7 +560,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
         const canvas = ctx.mount as HTMLCanvasElement;
         const result = await exportNow(
           { kind: "canvas", element: canvas },
-          { format: "png", filename: `voxel-scene-${Date.now()}.png`, scale: 2 },
+          { format: "png", filename: `asset-scene-${Date.now()}.png`, scale: 2 },
         );
         download(result);
       } finally {
@@ -721,7 +571,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     async exportGlb(ctx) {
       const blob = await exportGltf(ctx.state.sceneRoot);
       const url = URL.createObjectURL(blob);
-      download({ blob, url, filename: `voxel-scene-${Date.now()}.glb` });
+      download({ blob, url, filename: `asset-scene-${Date.now()}.glb` });
     },
     async recordMp4(ctx, params) {
       // Hide gizmo + outline for the whole recording.
@@ -737,7 +587,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
           duration: params.recordingDuration,
           fps: params.recordingFps,
           format: "mp4",
-          filename: `voxel-scene-${Date.now()}.mp4`,
+          filename: `asset-scene-${Date.now()}.mp4`,
         });
         download(result);
       } finally {
@@ -759,199 +609,57 @@ function setGizmoMode(state: VoxelState, mode: GizmoMode): void {
   state.transformControls.setMode(mode);
 }
 
-function addNewObject(state: VoxelState, starter: () => VoxelGrid, name: string): void {
-  if (state.objects.length >= MAX_OBJECTS) return;
-  const obj = makeObject(starter, name, state.sceneRoot, state.animTime, state.defaultSpawnType);
-  const i = state.objects.length;
-  obj.group.position.set(i * 18, 0, 0);
-  state.objects.push(obj);
-  state.dirty.add(obj.id);
-  setSelection(state, obj.id);
-  // framePending defaults to true on the new object — tick will frame-all
-  // once the spawn animation completes, when the bbox is stable.
-}
+type AssetResult = { model: THREE.Object3D; name: string };
 
-function cloneGrid(g: VoxelGrid): VoxelGrid {
-  return {
-    width: g.width,
-    height: g.height,
-    palette: g.palette.slice(),
-    indices: new Uint8Array(g.indices),
-    depth: new Uint8Array(g.depth),
-  };
-}
-
-type VoxelizeResult = { grid: VoxelGrid; sourceImage: HTMLImageElement };
-
-/** Add a new object from an already-built grid. Used by "Upload as new",
- *  "Generate as new", and gallery re-add. sourceImage is optional — when
- *  present (upload/AI paths) it enables the per-object Resolution control. */
-function addObjectFromGrid(
+/** Add a new SceneObject with an already-loaded model. Used by upload +
+ *  duplicate. Names are display-only; the file extension is dropped. */
+function addObjectWithModel(
   state: VoxelState,
-  grid: VoxelGrid,
+  model: THREE.Object3D,
   name: string,
-  sourceImage?: HTMLImageElement,
+  sourceLabel?: string,
 ): void {
   if (state.objects.length >= MAX_OBJECTS) {
     alert(`Scene full (max ${MAX_OBJECTS} objects). Delete one first.`);
     return;
   }
-  const obj = makeObject(() => grid, name, state.sceneRoot, state.animTime, state.defaultSpawnType);
-  obj.sourceImage = sourceImage;
-  obj.resolution = grid.width;
+  const obj = makeObject(name, state.sceneRoot, state.animTime, state.defaultSpawnType);
+  obj.model = model;
+  obj.sourceLabel = sourceLabel;
   const i = state.objects.length;
   obj.group.position.set(i * 18, 0, 0);
   state.objects.push(obj);
   state.dirty.add(obj.id);
   setSelection(state, obj.id);
-  // framePending defaults to true; tick will frame-all at spawn-end.
 }
 
-/** Open the file picker, voxelize the chosen image. Returns the grid +
- *  cleaned source image (or null if cancelled). Shared by upload paths. */
-function uploadAndVoxelize(params: VoxelParams): Promise<VoxelizeResult | null> {
+/** Open a file picker for .glb/.gltf/.obj, load the model via the
+ *  appropriate Three.js loader, return it. Resolves null on cancel. */
+function pickAndLoadAsset(): Promise<AssetResult | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/png,image/jpeg,image/webp";
+    input.accept = ".glb,.gltf,model/gltf-binary,model/gltf+json";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) { resolve(null); return; }
-      const raw = await loadImageFromFile(file);
-      const cleaned = await removeBackground(raw);
-      const grid = imageToGrid(cleaned, {
-        gridSize: params.gridSize,
-        palette: extractPalette(cleaned, 32),
-        useBrightnessAsDepth: params.depthScale > 0,
-      });
-      resolve({ grid, sourceImage: cleaned });
+      const url = URL.createObjectURL(file);
+      try {
+        const model = await loadGlbModel(url);
+        const name = file.name.replace(/\.(glb|gltf|obj)$/i, "");
+        resolve({ model, name });
+      } catch (err) {
+        console.error("Asset load failed:", err);
+        alert(`Failed to load ${file.name}: ${(err as Error).message}`);
+        resolve(null);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
     };
     input.click();
   });
 }
 
-/** Call /api/generate, strip the bg, voxelize. Returns the grid + cleaned
- *  source image (or null on error — alerts with the upstream Google reason).
- *  Also pushes the raw image + voxelized grid into the gallery. */
-async function aiAndVoxelize(params: VoxelParams, state: VoxelState): Promise<VoxelizeResult | null> {
-  if (!params.aiPrompt.trim()) return null;
-  const resp = await fetch("/api/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: params.aiPrompt }),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }));
-    // eslint-disable-next-line no-console
-    console.error("AI generate failed:", err);
-    alert(`AI generate failed: ${err.raw?.error?.message ?? err.error ?? "unknown"}`);
-    return null;
-  }
-  const { mimeType, dataBase64 } = await resp.json();
-  const rawDataUrl = `data:${mimeType};base64,${dataBase64}`;
-  const raw = await loadImageFromDataUrl(rawDataUrl);
-  const cleaned = await removeBackground(raw);
-  const grid = imageToGrid(cleaned, {
-    gridSize: params.gridSize,
-    palette: extractPalette(cleaned, 32),
-    useBrightnessAsDepth: params.depthScale > 0,
-  });
-  // Push to gallery — fire-and-forget; thumbnailing is async but cheap.
-  state.gallery.setLatest(rawDataUrl, cleaned, grid, params.aiPrompt).catch((err) => {
-    console.warn("Gallery push failed:", err);
-  });
-  return { grid, sourceImage: cleaned };
-}
-
-/** Synthetic placeholder grid for objects backed by a Tripo GLB. The grid
- *  is unused by the renderer when obj.model is set; it exists only to
- *  satisfy the shared VoxelObject scaffolding. 1×1 single empty cell. */
-function placeholderGrid(): VoxelGrid {
-  return {
-    width: 1,
-    height: 1,
-    palette: ["#00000000"],
-    indices: new Uint8Array([0]),
-    depth: new Uint8Array([0]),
-  };
-}
-
-type TripoResult = { model: THREE.Object3D; thumbUrl: string; glbBlobUrl: string };
-
-/** Call /api/tripo to start a text-to-3D task, poll until success, then
- *  fetch the GLB and load it via GLTFLoader. Surfaces upstream errors via
- *  alert. Returns null on failure or empty prompt. */
-async function tripoGenerate(params: VoxelParams, state: VoxelState): Promise<TripoResult | null> {
-  const prompt = params.aiPrompt.trim();
-  if (!prompt) return null;
-
-  // 1. Start task.
-  const startResp = await fetch("/api/tripo", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
-  });
-  if (!startResp.ok) {
-    const err = await startResp.json().catch(() => ({ error: startResp.statusText }));
-    console.error("Tripo start failed:", err);
-    alert(`Tripo start failed: ${err.error ?? "unknown"}${err.suggestion ? ` — ${err.suggestion}` : ""}`);
-    return null;
-  }
-  const { taskId } = await startResp.json();
-
-  // 2. Poll until success/failure. Tripo says ~110s; we cap at 5 min.
-  const startedAt = Date.now();
-  let glbUrl: string | null = null;
-  let thumbUrl: string | null = null;
-  let lastProgress = -1;
-  while (Date.now() - startedAt < 5 * 60_000) {
-    await new Promise((r) => setTimeout(r, 4000));
-    const pollResp = await fetch(`/api/tripo?taskId=${encodeURIComponent(taskId)}`);
-    if (!pollResp.ok) {
-      const err = await pollResp.json().catch(() => ({ error: pollResp.statusText }));
-      alert(`Tripo poll failed: ${err.error ?? "unknown"}`);
-      return null;
-    }
-    const data = await pollResp.json();
-    if (data.progress !== lastProgress) {
-      lastProgress = data.progress;
-      console.log(`Tripo: ${data.status} ${data.progress}%`);
-    }
-    if (data.status === "success") {
-      glbUrl = data.glbUrl;
-      thumbUrl = data.thumbUrl;
-      break;
-    }
-    if (data.status === "failed" || data.status === "cancelled") {
-      alert(`Tripo task ${data.status}`);
-      return null;
-    }
-  }
-  if (!glbUrl) { alert("Tripo timed out after 5 min."); return null; }
-
-  // 3. Fetch the GLB through our /api/tripo proxy (Tripo's CDN doesn't
-  //    serve CORS headers for cross-origin browsers).
-  const glbResp = await fetch(`/api/tripo?downloadGlb=${encodeURIComponent(glbUrl)}`);
-  if (!glbResp.ok) { alert(`GLB fetch failed: HTTP ${glbResp.status}`); return null; }
-  const glbBlob = await glbResp.blob();
-  const glbBlobUrl = URL.createObjectURL(glbBlob);
-  const model = await loadGlbModel(glbBlobUrl);
-
-  // 4. Best-effort gallery thumbnail (Tripo's rendered preview).
-  if (thumbUrl) {
-    try {
-      const t = await fetch(thumbUrl);
-      if (t.ok) {
-        const tBlob = await t.blob();
-        const tUrl = URL.createObjectURL(tBlob);
-        // Build a fake grid + image so the existing gallery shape accepts it.
-        const img = await loadImageFromDataUrl(tUrl);
-        state.gallery.setLatest(tUrl, img, placeholderGrid(), prompt).catch(() => {});
-      }
-    } catch { /* non-fatal */ }
-  }
-  return { model, thumbUrl: thumbUrl ?? "", glbBlobUrl };
-}
 
 /** Pinned bottom-right overlay listing the camera keybindings. Static text,
  *  always visible — mirrors the gallery overlay's bottom-left placement so
@@ -1028,7 +736,6 @@ function mountInfoOverlay(): InfoHandle {
         html += `<div style="color: #888; margin-top: 4px;">selected · ${d.selected.name}</div>`;
         html += `<div>pos&nbsp;&nbsp; <span style="color: #fff;">${fmt(px)}, ${fmt(py)}, ${fmt(pz)}</span></div>`;
         html += `<div>rot&nbsp;&nbsp; <span style="color: #fff;">${fmt(rx)}°, ${fmt(ry)}°, ${fmt(rz)}°</span></div>`;
-        html += `<div>res&nbsp;&nbsp; <span style="color: #fff;">${d.selected.resolution}²</span></div>`;
       } else {
         html += `<div style="color: #555; margin-top: 4px; font-style: italic; font-family: system-ui, sans-serif;">— nothing selected —</div>`;
       }
@@ -1047,7 +754,7 @@ function mountInfoOverlay(): InfoHandle {
 const SPAWN_DURATION = 0.9;
 
 /** Apply per-frame animations (spawn-in + idle) to an object's pivot. */
-function applyObjectAnimation(obj: VoxelObject, animTime: number, playing: boolean, spawnSpeed: number): void {
+function applyObjectAnimation(obj: SceneObject, animTime: number, playing: boolean, spawnSpeed: number): void {
   // Reset pivot to identity each frame so we can overlay cleanly.
   obj.pivot.position.set(0, 0, 0);
   obj.pivot.rotation.set(0, 0, 0);
@@ -1135,45 +842,3 @@ function elasticOut(t: number): number {
   return Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
 }
 
-/** Re-voxelize the source image at progressively higher resolutions over
- *  the spawn window. The result is a "chunky → fine" reveal, the exact
- *  pixel-spawning-in effect described. Only runs for spawnType="resolve"
- *  AND objects that have a sourceImage (AI/upload, not procedural starters).
- *
- *  Cached aggressively: each (target-res) pair voxelizes once and reuses.
- *  Snaps to even resolutions to keep cache hit rate high and avoid every
- *  frame triggering a rebuild.
- */
-function maybeStepResolveSpawn(
-  obj: VoxelObject,
-  animTime: number,
-  dirty: Set<string>,
-  spawnSpeed: number,
-): void {
-  if (obj.spawnType !== "resolve") return;
-  if (!obj.sourceImage) return;
-  const elapsed = animTime - obj.spawnedAt;
-  const effectiveDuration = SPAWN_DURATION / Math.max(0.1, spawnSpeed);
-  const t = Math.max(0, Math.min(1, elapsed / effectiveDuration));
-  // Resolution curve: start at 4, ease-out to the object's full resolution.
-  // Step by 2 to keep cache small.
-  const startRes = 4;
-  const targetRes = obj.resolution;
-  const raw = startRes + easeOutCubic(t) * (targetRes - startRes);
-  const stepped = Math.max(startRes, Math.min(targetRes, Math.round(raw / 2) * 2));
-  if (stepped === (obj.lastResolvedRes ?? obj.grid.width)) return;
-  // Look up or compute.
-  const cache = obj.resolveCache ??= new Map();
-  let grid = cache.get(stepped);
-  if (!grid) {
-    grid = imageToGrid(obj.sourceImage, {
-      gridSize: stepped,
-      palette: extractPalette(obj.sourceImage, 32),
-      useBrightnessAsDepth: false,
-    });
-    cache.set(stepped, grid);
-  }
-  obj.grid = grid;
-  obj.lastResolvedRes = stepped;
-  dirty.add(obj.id);
-}
