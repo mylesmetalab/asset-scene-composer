@@ -8,7 +8,7 @@ import * as THREE from "three";
 
 import {
   createScene, buildVoxelMesh, exportGltf, applyCameraPreset,
-  frameAll, focusOn, pickObject, updateSelectionOutline, loadGlbModel,
+  frameAll, focusOn, pickObject, updateSelectionOutline, loadGlbModel, applyInflation,
   type SceneRefs, type GizmoMode,
 } from "./scene";
 import {
@@ -43,6 +43,9 @@ type VoxelObject = {
   sourceImage?: HTMLImageElement;
   /** Loaded GLB scene from Tripo. Canonical render path for this tool. */
   model?: THREE.Object3D;
+  /** Vertex-displacement inflation applied to this object's model.
+   *  Re-applied non-destructively from cached originals on each change. */
+  inflation: number;
   resolution: number;
   /** Animation state. */
   spawnType: SpawnType;
@@ -117,6 +120,10 @@ const fields = {
   objRotX:    folder(slider({ min: -180, max: 180, step: 1, default: 0, label: "Rot X (°)" }), "Selected"),
   objRotY:    folder(slider({ min: -180, max: 180, step: 1, default: 0, label: "Rot Y (°)" }), "Selected"),
   objRotZ:    folder(slider({ min: -180, max: 180, step: 1, default: 0, label: "Rot Z (°)" }), "Selected"),
+  // Pillow-up the selected mesh by pushing verts along their normals.
+  // Reapplied non-destructively from cached originals so the slider can
+  // sweep freely without compounding.
+  inflation:  folder(slider({ min: 0, max: 0.5, step: 0.01, default: 0.15, label: "Inflation" }), "Selected"),
   baseDepth:      folder(structural(slider({ min: 1, max: 16, step: 1, default: 2, label: "Base depth" })), "Selected"),
   depthScale:     folder(structural(slider({ min: 0, max: 16, step: 1, default: 0, label: "Depth from light" })), "Selected"),
   // Per-object resolution. Slider value is the target; "Apply" button
@@ -185,6 +192,7 @@ type VoxelState = SceneRefs & {
   lastTgtX: number; lastTgtY: number; lastTgtZ: number;
   lastObjPosX: number; lastObjPosY: number; lastObjPosZ: number;
   lastObjRotX: number; lastObjRotY: number; lastObjRotZ: number;
+  lastInflation: number;
   lastSelectedIdForSliders: string | null;
   /** Live info readout overlay (top-right corner). */
   info: InfoHandle;
@@ -230,6 +238,7 @@ function makeObject(
     spawnType, spawnedAt: animTime,
     idleType: "none", idleSpeed: 1,
     framePending: true,
+    inflation: 0,
   };
 }
 
@@ -268,6 +277,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     tgtX: -0.5, tgtY: 0.1, tgtZ: -1,
     objPosX: 0, objPosY: 0, objPosZ: 0,
     objRotX: 0, objRotY: 0, objRotZ: 0,
+    inflation: 0.15,
     frameAll: () => {},
     focusOn: () => {},
     resetCam: () => {},
@@ -359,6 +369,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       lastTgtX: -0.5, lastTgtY: 0.1, lastTgtZ: -1,
       lastObjPosX: 0, lastObjPosY: 0, lastObjPosZ: 0,
       lastObjRotX: 0, lastObjRotY: 0, lastObjRotZ: 0,
+      lastInflation: 0.15,
       lastSelectedIdForSliders: null,
       info,
     };
@@ -495,6 +506,7 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
       s.lastObjRotX = THREE.MathUtils.radToDeg(sel.group.rotation.x);
       s.lastObjRotY = THREE.MathUtils.radToDeg(sel.group.rotation.y);
       s.lastObjRotZ = THREE.MathUtils.radToDeg(sel.group.rotation.z);
+      s.lastInflation = sel.inflation;
       s.lastSelectedIdForSliders = s.selectedId;
     }
     if (sel) {
@@ -509,6 +521,12 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
           THREE.MathUtils.degToRad(params.objRotZ),
         );
         s.lastObjRotX = params.objRotX; s.lastObjRotY = params.objRotY; s.lastObjRotZ = params.objRotZ;
+      }
+      // Inflation — re-deform from cached originals on every change.
+      if (params.inflation !== s.lastInflation) {
+        sel.inflation = params.inflation;
+        if (sel.model) applyInflation(sel.model, params.inflation);
+        s.lastInflation = params.inflation;
       }
     }
 

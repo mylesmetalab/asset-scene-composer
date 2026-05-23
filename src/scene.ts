@@ -7,15 +7,26 @@ import type { VoxelGrid } from "./voxelize";
 
 /** Load a GLB from a URL (object URL or remote) into a THREE.Object3D.
  *  Normalizes scale so the longest dimension is ~16 units and anchors
- *  the bottom of the bbox at y=0 so the floor shadow lands correctly. */
+ *  the bottom of the bbox at y=0 so the floor shadow lands correctly.
+ *  Also caches each mesh's original positions + normals so applyInflation
+ *  can deform from the source rather than compounding displacement. */
 export async function loadGlbModel(url: string): Promise<THREE.Object3D> {
   const loader = new GLTFLoader();
   const gltf = await loader.loadAsync(url);
   const model = gltf.scene;
   model.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh) {
-      o.castShadow = true;
-      o.receiveShadow = false;
+    const m = o as THREE.Mesh;
+    if (m.isMesh) {
+      m.castShadow = true;
+      m.receiveShadow = false;
+      // Stash originals for non-destructive inflation deforms.
+      const geo = m.geometry as THREE.BufferGeometry;
+      if (geo.attributes.position) {
+        m.userData.originalPositions = (geo.attributes.position as THREE.BufferAttribute).clone();
+        m.userData.originalNormals = geo.attributes.normal
+          ? (geo.attributes.normal as THREE.BufferAttribute).clone()
+          : null;
+      }
     }
   });
   // Auto-normalize: longest-axis to ~16 units, bottom at y=0.
@@ -32,6 +43,53 @@ export async function loadGlbModel(url: string): Promise<THREE.Object3D> {
   bbox2.getCenter(center);
   model.position.set(-center.x, -bbox2.min.y, -center.z);
   return model;
+}
+
+/** Push every vertex outward along its (original) normal by amount * maxDim
+ *  units, then recompute smooth normals. Reads from cached originals each
+ *  call so applying 0.30 then 0.10 doesn't compound — it always deforms
+ *  from the source. Pass 0 to reset to the original geometry. */
+export function applyInflation(model: THREE.Object3D, amount: number): void {
+  model.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const geo = m.geometry as THREE.BufferGeometry;
+    const orig = m.userData.originalPositions as THREE.BufferAttribute | undefined;
+    const origNormals = m.userData.originalNormals as THREE.BufferAttribute | null | undefined;
+    if (!orig) return;
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+
+    // Always reset to original positions first.
+    pos.copy(orig);
+
+    if (amount === 0 || !origNormals) {
+      pos.needsUpdate = true;
+      if (origNormals && geo.attributes.normal) {
+        (geo.attributes.normal as THREE.BufferAttribute).copy(origNormals);
+        geo.attributes.normal.needsUpdate = true;
+      }
+      return;
+    }
+
+    // Bbox-relative displacement so the slider feels consistent across
+    // models of different sizes.
+    const bbox = new THREE.Box3().setFromBufferAttribute(orig);
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+    const displacement = amount * maxDim;
+
+    for (let i = 0; i < pos.count; i++) {
+      const px = orig.getX(i), py = orig.getY(i), pz = orig.getZ(i);
+      const nx = origNormals.getX(i), ny = origNormals.getY(i), nz = origNormals.getZ(i);
+      pos.setXYZ(i, px + nx * displacement, py + ny * displacement, pz + nz * displacement);
+    }
+    pos.needsUpdate = true;
+
+    // Smooth normals from the deformed positions — gives the inflated form
+    // the rounded shading instead of looking like puffed-up faceted geometry.
+    geo.computeVertexNormals();
+  });
 }
 
 export type SceneRefs = {
