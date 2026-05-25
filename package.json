@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@mylesmetalab/recorder": "^0.9.1",
-    "@mylesmetalab/schema": "^0.5.1",
-    "@mylesmetalab/shell": "^0.12.2",
+    "@mylesmetalab/schema": "^0.5.2",
+    "@mylesmetalab/shell": "^0.12.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "three": "^0.171.0",
