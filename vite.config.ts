@@ -72,7 +72,7 @@ export default defineConfig(({ mode }) => {
   loadEnv(mode, process.cwd(), "");
   return {
     plugins: [react(), syncDevMock()],
-    server: { port: 5182 },
+    server: { port: 5182, strictPort: true },
     envDir: ".",
     optimizeDeps: {
       exclude: [

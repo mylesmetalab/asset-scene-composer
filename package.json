@@ -8,7 +8,7 @@
     "predev": "node scripts/sync-shell.mjs",
     "prebuild": "node scripts/sync-shell.mjs",
     "sync-shell": "node scripts/sync-shell.mjs",
-    "dev": "vite --port 5182",
+    "dev": "vite --port 5182 --strictPort",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview --port 5281",
     "typecheck": "tsc -p tsconfig.json --noEmit"
