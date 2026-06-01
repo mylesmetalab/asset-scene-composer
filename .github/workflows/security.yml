@@ -1,0 +1,23 @@
+# Supply-chain gate (ADR-076). Scans the dependency lockfile for known
+# vulnerabilities + malicious packages. No `pnpm install`: OSV reads the
+# lockfile directly, so this works even on a maintainer-linked tool whose
+# pnpm.overrides point at local link: paths absent in CI. Secrets are gated
+# at publish (the /publish skill's step 7). Bump the SHAs deliberately.
+name: security
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC — newly-disclosed CVEs
+permissions:
+  contents: read
+jobs:
+  osv:
+    name: OSV-Scanner (deps — vulns + malicious packages)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: google/osv-scanner-action/osv-scanner-action@e69cc6c86b31f1e7e23935bbe7031b50e51082de # v2.0.2
+        with:
+          scan-args: "--lockfile=./pnpm-lock.yaml"
