@@ -385,12 +385,19 @@ export const voxelSceneTool = defineGenerativeTool<VoxelParams, VoxelState>({
     // Designers who want to capture a static frame can pause via Playing.
     // (For now we always show the gizmo while authoring.)
 
-    // Resize.
+    // Resize. Camera aspect is checked SEPARATELY from the buffer-size guard:
+    // the shell pre-sizes the canvas to the artboard before setup, so the
+    // guard never fires on frame 1 and camera.aspect would stay at its
+    // constructed 1 — stretching every render on non-square artboards
+    // (found on media-universe).
     const w = renderer.domElement.clientWidth;
     const h = renderer.domElement.clientHeight;
     if (renderer.domElement.width !== w || renderer.domElement.height !== h) {
       renderer.setSize(w, h, false);
-      camera.aspect = w / h;
+    }
+    const aspect = w / Math.max(1, h);
+    if (Math.abs(camera.aspect - aspect) > 1e-6) {
+      camera.aspect = aspect;
       camera.updateProjectionMatrix();
     }
 
